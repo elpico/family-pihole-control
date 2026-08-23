@@ -6,31 +6,46 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
     <title>Family Control</title>
+
+    <style>
+        .error {
+            color: #b00020;
+            font-weight: bold;
+        }
+    </style>
 </head>
 
 <body>
 
     <h1>Family Control</h1>
 
-    <h2>Pi-hole Groups</h2>
+    {% if error %}
 
-    {% for group in groups %}
+        <p class="error">{{ error }}</p>
 
-        <div>
-            <strong>{{ group.name }}</strong>
+    {% else %}
 
-            {% if group.enabled %}
-                🟢 ON
-            {% else %}
-                🔴 OFF
-            {% endif %}
+        <h2>Pi-hole Groups</h2>
 
-            <small>
-                (ID: {{ group.id }})
-            </small>
-        </div>
+        {% for group in groups %}
 
-    {% endfor %}
+            <div>
+                <strong>{{ group.name }}</strong>
+
+                {% if group.enabled %}
+                    🟢 ON
+                {% else %}
+                    🔴 OFF
+                {% endif %}
+
+                <small>
+                    (ID: {{ group.id }})
+                </small>
+            </div>
+
+        {% endfor %}
+
+    {% endif %}
 
 </body>
 

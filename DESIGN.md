@@ -761,11 +761,9 @@ family-pihole-control/
 │   ├── pihole.py
 │   ├── models.py
 │   ├── scheduler.py
-│   ├── routes/
 │   └── templates/
 ├── tests/
-├── docker/
-├── docker-compose.yml
+├── compose.yml
 ├── requirements.txt
 ├── .env.example
 ├── DESIGN.md
@@ -929,14 +927,6 @@ The interaction between:
 
 should be tested against the real installation before implementing
 inheritance assumptions.
-
-### IPv6
-
-The current design discussion has focused on the IPv4 LAN
-(`192.168.1.0/24`).
-
-IPv6 behaviour should be investigated before claiming that a
-network-wide DNS policy covers every device.
 
 ------------------------------------------------------------------------
 

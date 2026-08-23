@@ -3,7 +3,7 @@ import os
 from fastapi import FastAPI, Request
 from fastapi.templating import Jinja2Templates
 
-from .pihole import PiHoleClient
+from .pihole import PiHoleClient, PiHoleError
 
 
 app = FastAPI(title="Family Pi-hole Control")
@@ -20,12 +20,20 @@ pihole = PiHoleClient(
 @app.get("/")
 async def home(request: Request):
 
-    result = await pihole.get_groups()
+    groups = None
+    error = None
+
+    try:
+        result = await pihole.get_groups()
+        groups = result["groups"]
+    except PiHoleError as exc:
+        error = str(exc)
 
     return templates.TemplateResponse(
         request=request,
         name="index.html",
         context={
-            "groups": result["groups"],
+            "groups": groups,
+            "error": error,
         },
     )

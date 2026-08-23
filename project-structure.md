@@ -7,6 +7,7 @@ family-pihole-control/
 │   └── templates/
 │       └── index.html
 │
+├── tests/
 ├── Dockerfile
 ├── compose.yaml
 ├── requirements.txt
