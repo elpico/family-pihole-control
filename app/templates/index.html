@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Family Control</title>
+</head>
+
+<body>
+
+    <h1>Family Control</h1>
+
+    <h2>Pi-hole Groups</h2>
+
+    {% for group in groups %}
+
+        <div>
+            <strong>{{ group.name }}</strong>
+
+            {% if group.enabled %}
+                🟢 ON
+            {% else %}
+                🔴 OFF
+            {% endif %}
+
+            <small>
+                (ID: {{ group.id }})
+            </small>
+        </div>
+
+    {% endfor %}
+
+</body>
+
+</html>
