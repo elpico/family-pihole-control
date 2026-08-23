@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Family Control</title>
+
+    <style>
+        .error {
+            color: #b00020;
+            font-weight: bold;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>Family Control</h1>
+
+    {% if error %}
+
+        <p class="error">{{ error }}</p>
+
+    {% else %}
+
+        <h2>Pi-hole Groups</h2>
+
+        {% for group in groups %}
+
+            <div>
+                <strong>{{ group.name }}</strong>
+
+                {% if group.enabled %}
+                    🟢 ON
+                {% else %}
+                    🔴 OFF
+                {% endif %}
+
+                <small>
+                    (ID: {{ group.id }})
+                </small>
+            </div>
+
+        {% endfor %}
+
+    {% endif %}
+
+</body>
+
+</html>
