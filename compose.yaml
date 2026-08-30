@@ -10,3 +10,8 @@ services:
 
     environment:
       PIHOLE_URL: "${PIHOLE_URL}"
+      SCHEDULE_DIR: "/data"
+      SCHEDULER_TICK_SECONDS: "30"
+
+    volumes:
+      - ./data:/data

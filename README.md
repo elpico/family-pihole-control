@@ -18,15 +18,23 @@ FastAPI
 
 Jinja2
 
-HTMX (planned for interactive controls)
+HTMX
 
-SQLite (planned)
-
-APScheduler (planned)
+Weekly scheduler (stdlib asyncio loop; JSON file persistence, no database)
 
 Docker / Docker Compose
 
 Raspberry Pi 5 deployment target
+
+Scheduler
+
+The application includes a weekly internet-control scheduler for the content categories (Streaming, Gaming, Social Media):
+
+- Schedules block chosen categories on chosen days between a start and an end time. If the end time is before the start time, the window runs overnight (e.g. 21:00 → 08:00 the next day). When a window ends, the scheduler re-allows the categories.
+- Manual Allow/Block buttons act as temporary overrides; the schedule re-asserts at the next boundary.
+- Pause stops the scheduler from touching Pi-hole groups so manual choices persist; Resume immediately re-applies the current schedule.
+- Schedules and the pause state persist in the `./data` directory (`schedules.json`, `scheduler-state.json`), mounted into the container at `/data`.
+- The scheduler checks every 30 seconds (`SCHEDULER_TICK_SECONDS` in compose.yaml). All times are the server's local time.
 
 Development
 

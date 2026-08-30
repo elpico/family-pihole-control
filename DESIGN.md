@@ -1,969 +1,408 @@
+# Family Pi-hole Control — Design
+
 ## 1. Purpose
 
-A simple family-friendly web application for controlling an existing
-Pi-hole installation.
+Family Pi-hole Control is a small local web application that provides a simple UI for controlling an existing Pi-hole installation.
 
-The application is **not intended to replace Pi-hole**. Pi-hole remains
-the DNS filtering and enforcement layer. The application provides a much
-simpler UX for the common operations currently handled through the
-Pi-hole UI and cron jobs:
+The application does not implement its own DNS filtering or policy engine.
 
--   Enable/disable existing restriction groups
--   Schedule restriction groups
--   Expose existing blocking rules as simple, human-friendly controls
--   Provide network-wide controls for common services such as YouTube,
-    Netflix, Roblox, TikTok, etc.
--   Provide temporary overrides
--   Eventually allow secure remote management from outside the home
+**Pi-hole remains responsible for clients, groups, rules and DNS enforcement.**
 
-The initial deployment will be local to the home network. Remote access
-is a later goal.
+Family Pi-hole Control provides a convenient way to enable or disable selected Pi-hole groups.
 
-------------------------------------------------------------------------
+---
 
-## 2. Current Environment
+## 2. Scope
 
-### Pi-hole
+The UI provides three levels of control:
 
-Current installed versions:
+### All
 
--   Pi-hole Core: **v6.4.3**
--   Pi-hole Web: **v6.6**
--   Pi-hole FTL: **v6.7**
+Apply a control to everyone.
 
-Pi-hole is connected directly to the home router.
+### Categories
 
-The home LAN is believed to be `192.168.1.0/24`, with the DHCP
-allocation range believed to be approximately
-`192.168.1.64`--`192.168.1.253`. This should be verified before relying
-on the exact network configuration.
+- Streaming
+- Gaming
+- Social Media
 
-### Existing Pi-hole groups
+### Children
 
-The current groups returned by the API are:
+- Orla
+- Finnian
+- Kian
 
-  ------------------------------------------------------------------------------
-                  ID Name                        Enabled         Purpose /
-                                                                 observed use
-  ------------------ ------------------- ----------------------- ---------------
-                   0 `Default`                     Yes           Pi-hole default
-                                                                 group
+The application controls these through the corresponding existing Pi-hole groups.
 
-                   1 `kids-restricted`    No at time of initial  Kids
-                                               inspection        restrictions
+| UI | Pi-hole group |
+|---|---|
+| Streaming | `streaming` |
+| Gaming | `gaming` |
+| Social Media | `social-media` |
+| Orla | `orla` |
+| Finnian | `finnian` |
+| Kian | `kian` |
 
-                   2 `Orla-restricted`    No at time of initial  Orla-specific
-                                               inspection        restrictions
+The application should identify groups by name rather than relying on hard-coded Pi-hole group IDs.
 
-                   3 `TV`                     No at initial      TV restrictions
-                                               inspection        
+---
 
-                   5 `Devices`                     Yes           Existing device
-                                                                 grouping
-  ------------------------------------------------------------------------------
+## 3. What Pi-hole Owns
 
-The `enabled` state changes over time, so the table above describes the
-state observed during initial API inspection rather than a permanent
-state.
+Pi-hole remains the source of truth for:
 
-### Existing scheduling
+- Clients/devices
+- Client-to-group assignments
+- Domain and regex rules
+- Rule-to-group assignments
+- Group enabled/disabled state
+- DNS filtering and enforcement
 
-The current root crontab contains a summer schedule which directly
-modifies the Pi-hole database:
+Family Pi-hole Control should not duplicate this information.
 
-``` cron
-30 22 * * * /usr/bin/pihole-FTL sqlite3 /etc/pihole/gravity.db "UPDATE 'group' SET enabled = 1 WHERE id in (1,2);" && /usr/local/bin/pihole reloaddns
+The application does **not** manage individual domains or regex rules.
 
-00 07 * * * /usr/bin/pihole-FTL sqlite3 /etc/pihole/gravity.db "UPDATE 'group' SET enabled = 0 WHERE id in (1,2);" && /usr/local/bin/pihole reloaddns
+---
+
+## 4. How Control Works
+
+The basic operation is:
+
+```text
+User clicks Block/Allow
+        ↓
+Family Control identifies Pi-hole group
+        ↓
+Family Control changes group enabled state
+        ↓
+Pi-hole applies its existing rules
+        ↓
+DNS requests are blocked or allowed
 ```
-
-This currently means:
-
--   22:30: enable `kids-restricted` and `Orla-restricted`
--   07:00: disable `kids-restricted` and `Orla-restricted`
-
-There are also commented-out school-term rules in the crontab. The
-active schedule is the summer schedule.
-
-The new application should eventually replace this cron-based
-scheduling.
-
-**Important:** the new application should use the supported Pi-hole API
-rather than directly modifying `gravity.db`.
-
-------------------------------------------------------------------------
-
-## 3. Pi-hole API Findings
-
-The Pi-hole v6 API is available locally under:
-
-``` text
-http://pi.hole/api/docs/
-```
-
-The local API documentation is the authoritative reference for the
-installed Pi-hole version.
-
-### Authentication
-
-The current installation has **no Pi-hole web/API password configured**.
-
-A request to:
-
-``` http
-GET /api/auth
-```
-
-returned:
-
-``` json
-{
-  "session": {
-    "valid": true,
-    "totp": false,
-    "sid": null,
-    "validity": -1,
-    "message": "no password set"
-  }
-}
-```
-
-This is acceptable for initial LAN-only experimentation, but a
-password/authentication mechanism must be established before any remote
-exposure.
-
-### Groups
-
-Confirmed working:
-
-``` http
-GET /api/groups
-```
-
-Example:
-
-``` bash
-curl -s http://localhost/api/groups | python3 -m json.tool
-```
-
-Individual groups can also be retrieved:
-
-``` http
-GET /api/groups/{name}
-```
-
-Example:
-
-``` bash
-curl -s http://localhost/api/groups/kids-restricted | python3 -m json.tool
-```
-
-### Group enable/disable
-
-A write operation was successfully tested against the existing `TV`
-group.
-
-``` http
-PUT /api/groups/TV
-Content-Type: application/json
-```
-
-with:
-
-``` json
-{
-  "name": "TV",
-  "comment": null,
-  "enabled": true
-}
-```
-
-The request succeeded and returned:
-
-``` json
-"processed": {
-  "errors": [],
-  "success": [
-    {
-      "item": "TV"
-    }
-  ]
-}
-```
-
-The group subsequently reported:
-
-``` json
-"enabled": true
-```
-
-The same operation can be used to disable the group by setting `enabled`
-to `false`.
-
-This is the first confirmed write operation that the application will
-rely upon.
-
-### Clients
-
-Confirmed working:
-
-``` http
-GET /api/clients
-```
-
-The API returns client identifiers, comments/names, group assignments,
-IDs and timestamps.
-
-Examples observed:
-
--   `Orla Computer` → groups `0,2`
--   `Kian FireHD Ipad` → groups `0,1,3`
--   `Amazon Firestick - Lounge TV` → groups `0,1,2,3`
--   `Samsung TV` → groups `0,3`
--   `AMD Gaming PC` → groups `0,1`
-
-This confirms that the existing Pi-hole configuration already represents
-device-level restrictions using multiple group memberships.
-
-The application should therefore **reuse these existing clients and
-groups**, rather than creating a second device/group system.
-
-### Domains
-
-Confirmed working:
-
-``` http
-GET /api/domains?group_id=3
-```
-
-The API returned existing exact and regex deny rules, including:
-
--   YouTube
--   Google Video
--   Roblox
--   Roblox CDN
--   Minecraft
--   Mojang
--   Netflix
--   Prime Video
--   Instagram
--   TikTok
--   Snapchat
--   YouTube-related domains
--   BBC
-
-The response includes:
-
--   domain
--   unicode representation
--   type
--   kind (`exact` or `regex`)
--   comment
--   group IDs
--   enabled state
--   domain ID
--   timestamps
-
-Example:
-
-``` json
-{
-  "domain": "^(.+[_.-])?netflix\\.[a-z]+$",
-  "type": "deny",
-  "kind": "regex",
-  "comment": "Netflix blocker",
-  "groups": [1, 2],
-  "enabled": true,
-  "id": 11
-}
-```
-
-The existing comments are useful human-readable metadata. Examples
-include:
-
--   `Netflix blocker`
--   `Amazon prime blocker`
--   `Instagram blocker`
--   `Tiktok blocker`
--   `Snapchat`
-
-### Domain/group relationships
-
-Pi-hole clearly supports domains being associated with multiple groups;
-this is visible directly in the API responses through the `groups`
-array.
-
-However, during the initial API investigation, a documented v6 REST
-operation for directly adding/removing an existing domain from a group
-was **not established**.
-
-Therefore:
-
--   Do **not** assume an undocumented domain/group mutation endpoint.
--   Do **not** make the application write directly to Pi-hole's
-    database.
--   Further API investigation/testing is required before making
-    domain-group membership a core write operation.
-
-------------------------------------------------------------------------
-
-## 4. Pi-hole Group Semantics
-
-`Default` (group ID 0) is a special Pi-hole group.
-
-A client which is not explicitly assigned to another group uses the
-Default group. Explicitly managed clients can have Default plus
-additional groups.
 
 For example:
 
-``` text
-New/unmanaged device
-    -> Default
-
-Orla Computer
-    -> Default + Orla-restricted
-
-Kian FireHD
-    -> Default + kids-restricted + TV
+```text
+Streaming → Block
 ```
 
-This is important for network-wide policy design.
+means:
 
-### Desired interpretation
-
-The application should treat Default as the potential
-**baseline/network-wide policy layer**.
-
-However, the exact mechanics for implementing network-wide blocks
-through existing domain/group associations must be validated before
-changing real configuration.
-
-------------------------------------------------------------------------
-
-## 5. Existing Restriction Model
-
-The existing Pi-hole configuration already contains most of the actual
-filtering policy.
-
-The application should therefore be a **control plane / simplified UX**,
-not a second DNS filtering system.
-
-Existing groups:
-
-``` text
-kids-restricted
-Orla-restricted
-TV
+```text
+Pi-hole group "streaming"
+enabled = true
 ```
 
-already represent restriction profiles.
+and:
 
-The app should expose them in simple human terms.
+```text
+Streaming → Allow
+```
+
+means:
+
+```text
+Pi-hole group "streaming"
+enabled = false
+```
+
+The same mechanism applies to the child groups.
+
+---
+
+## 5. All Control
+
+The UI should provide an **All** control for applying a restriction across everyone.
+
+The exact implementation of All should remain isolated from the normal single-group controls.
+
+`Default` is a special built-in Pi-hole group and should not automatically be assumed to represent the same thing as "All".
+
+The application should determine the appropriate set of groups to modify for an All operation and apply the change consistently.
+
+This logic should be kept in one place so it can be changed later without affecting category or child controls.
+
+---
+
+## 6. UI
+
+The UI should remain deliberately simple.
+
+A possible layout:
+
+```text
+FAMILY CONTROL
+
+ALL
+────────────────────────────────
+[ Block All ]          [ Allow All ]
+
+
+CONTENT
+────────────────────────────────
+Streaming       BLOCKED       [ Allow ]
+Gaming          ALLOWED       [ Block ]
+Social Media    ALLOWED       [ Block ]
+
+
+CHILDREN
+────────────────────────────────
+Orla            BLOCKED       [ Allow ]
+Finnian         ALLOWED       [ Block ]
+Kian            ALLOWED       [ Block ]
+```
+
+The displayed state comes from the corresponding Pi-hole group.
+
+### State terminology
+
+When a restriction group is enabled:
+
+```text
+BLOCKED
+```
+
+When a restriction group is disabled:
+
+```text
+ALLOWED
+```
+
+The UI should make the current state obvious and provide the opposite action.
+
+---
+
+## 7. Pi-hole API
+
+Use the Pi-hole v6 API.
+
+The application needs only the functionality required to:
+
+1. Read groups.
+2. Find the configured groups by name.
+3. Read their enabled state.
+4. Change a group's enabled state.
+5. Confirm the resulting state.
+
+The exact API endpoint and payload should be based on the installed Pi-hole API rather than assumptions about earlier Pi-hole versions.
+
+Do not modify Pi-hole's database directly.
+
+---
+
+## 8. Application Structure
+
+Keep the application small.
+
+A suitable structure is:
+
+```text
+app/
+├── __init__.py
+├── main.py
+├── pihole.py
+└── templates/
+    └── index.html
+```
+
+The Pi-hole client should contain the API interaction.
+
+The FastAPI application should contain the routes and UI behaviour.
+
+Avoid introducing additional layers unless they solve a real problem.
+
+---
+
+## 9. Configuration
+
+The application should have a small configuration describing the groups exposed by the UI.
 
 For example:
 
-``` text
-Kids restrictions     ON
-Orla restrictions     ON
-TV restrictions       OFF
+```python
+GROUPS = {
+    "categories": {
+        "streaming": "Streaming",
+        "gaming": "Gaming",
+        "social-media": "Social Media",
+    },
+    "children": {
+        "orla": "Orla",
+        "finnian": "Finnian",
+        "kian": "Kian",
+    },
+}
 ```
 
-rather than exposing Pi-hole's full technical UI.
+These names identify existing Pi-hole groups.
 
-------------------------------------------------------------------------
+The application should not create missing groups automatically.
 
-## 6. Network-Wide Blocks
+If a configured group does not exist, the application should report a clear error.
 
-The desired UX includes simple controls such as:
+---
 
-``` text
-Network-wide
+## 10. API Routes
 
-YouTube      BLOCKED
-Netflix      ALLOWED
-Roblox       BLOCKED
-TikTok       BLOCKED
-Instagram    BLOCKED
-```
-
-The user already has the underlying Pi-hole rules configured.
-
-A human-friendly service may consist of multiple Pi-hole rules.
-
-For example, YouTube currently consists of several rules, including:
-
--   `youtube.com`
--   `googlevideo.com`
--   `youtu.be`
--   `ytimg.com`
--   `ggpht.com`
--   `youtube-ui.l.google.com`
--   `youtube-nocookie.com`
-
-Therefore, the application should not expose individual regexes/domains
-as the primary UX.
-
-Instead, the application should have a concept such as:
-
-``` text
-YouTube
-    -> one or more underlying Pi-hole rules
-```
-
-Likewise:
-
-``` text
-Roblox
-    -> roblox.com
-    -> rbxcdn.com
-    -> assetdelivery.roblox.com
-
-Netflix
-    -> existing Netflix regex
-
-Prime Video
-    -> existing Prime Video regex
-```
-
-The mapping between a human-friendly service and its Pi-hole rule IDs
-may need to be maintained by the application.
-
-### Important design principle
-
-Pi-hole remains the source of truth for the actual filtering rules.
-
-The application should not duplicate the contents of those rules.
-
-------------------------------------------------------------------------
-
-## 7. Desired Policy Behaviour
-
-A key UX requirement is the relationship between network-wide and
-group-specific restrictions.
-
-### Network-wide block enabled
-
-If the user sets:
-
-``` text
-YouTube = BLOCKED network-wide
-```
-
-the intended result is that YouTube is blocked for everyone.
+Keep the application API small.
 
 Conceptually:
 
-``` text
-YouTube
-    Default          BLOCKED
-    Kids             BLOCKED
-    Orla             BLOCKED
-    TV               BLOCKED
-```
-
-### Network-wide block disabled
-
-If the user sets:
-
-``` text
-YouTube = ALLOWED network-wide
-```
-
-that should mean:
-
-> There is no network-wide YouTube restriction.
-
-It should **not** automatically remove independently configured
-restrictions.
-
-For example:
-
-``` text
-YouTube
-    Default          ALLOWED
-    Kids             BLOCKED
-    Orla             ALLOWED
-    TV               ALLOWED
-```
-
-This allows individual group policies to remain independent.
-
-### Inheritance concept
-
-The application may eventually distinguish:
-
-``` text
-BLOCKED [inherited from network]
-```
-
-from:
-
-``` text
-BLOCKED [explicit group policy]
-```
-
-This is an application-level concept; Pi-hole does not need to know
-about "inheritance".
-
-Example:
-
-``` text
-YouTube
-
-Whole network     BLOCKED
-
-Kids              BLOCKED
-                  inherited from network
-
-Orla              ALLOWED
-
-TV                BLOCKED
-                  explicitly configured
-```
-
-This distinction is important when the network-wide block is removed.
-
-------------------------------------------------------------------------
-
-## 8. Scheduling
-
-Scheduling should move from cron into the application.
-
-The application should store schedules in its own database and use the
-Pi-hole API to apply the desired state.
-
-Example:
-
-``` text
-Kids + Orla restrictions
-
-Every day
-22:30 -> ON
-07:00 -> OFF
-```
-
-This replaces the current:
-
-``` cron
-22:30 -> direct SQLite update
-07:00 -> direct SQLite update
-```
-
-Potential future schedules:
-
--   Weekday/weekend schedules
--   School-term schedules
--   Summer schedules
--   Temporary overrides
--   One-off exceptions
--   Different schedules for different groups
--   Network-wide service schedules
-
-### Temporary override
-
-A useful UX feature:
-
-``` text
-Roblox
-BLOCKED
-
-Allow for:
-[ 15 min ]
-[ 30 min ]
-[ 1 hour ]
-[ Until bedtime ]
-```
-
-The application records the override and restores the scheduled state
-automatically.
-
-------------------------------------------------------------------------
-
-## 9. Proposed UX
-
-The application should deliberately be much simpler than Pi-hole's
-native interface.
-
-### Dashboard
-
-``` text
-FAMILY CONTROL
-
-NETWORK
-
-YouTube       BLOCKED
-Netflix       ALLOWED
-Roblox        BLOCKED
-TikTok        BLOCKED
-
-
-RESTRICTIONS
-
-Kids          ON
-Orla          ON
-TV            OFF
-
-
-SCHEDULE
-
-Kids + Orla
-22:30 -> 07:00
-```
-
-### Network controls
-
-Show common services as simple toggles:
-
-``` text
-YouTube
-Netflix
-Roblox
-TikTok
-Instagram
-Prime Video
-Minecraft
-Snapchat
-```
-
-### Restriction profiles
-
-Expose existing Pi-hole groups:
-
-``` text
-Kids restrictions
-Orla restrictions
-TV restrictions
-```
-
-### Devices
-
-Use existing Pi-hole client names/comments.
-
-The user sees:
-
-``` text
-Orla Computer
-Kian FireHD
-Lounge TV
-AMD Gaming PC
-```
-
-rather than MAC addresses.
-
-------------------------------------------------------------------------
-
-## 10. Proposed Technical Stack
-
-### Backend
-
-**Python + FastAPI**
-
-Reasons:
-
--   Fits existing Python experience
--   Natural API-oriented architecture
--   Automatic OpenAPI documentation
--   Clean request/response validation
--   Easy separation of Pi-hole client, scheduler and application logic
-
-### Frontend
-
-Initial preference:
-
-**Jinja2 + HTMX**
-
-This avoids the complexity of a full SPA while allowing a responsive,
-modern web interface.
-
-React/TypeScript can be introduced later if the application grows
-substantially.
-
-### Database
-
-**SQLite** initially.
-
-The database should contain application state such as:
-
--   Friendly service definitions
--   Service → Pi-hole domain IDs
--   Schedules
--   Temporary overrides
--   Application metadata
-
-It should **not** duplicate Pi-hole's complete filtering database.
-
-### Scheduler
-
-**APScheduler** or an equivalent application scheduler.
-
-The scheduler should be responsible for application schedules rather
-than system cron.
-
-### Deployment
-
-**Docker Compose** on the Raspberry Pi 5.
-
-Docker is the preferred deployment mechanism because the Pi 5 has ample resources for this lightweight application and containerisation gives us a clean, reproducible deployment from the GitHub repository.
-
-Target structure:
-
 ```text
-Raspberry Pi 5
-
-├── Pi-hole
-│
-└── Family Control
-    └── Docker container
-        ├── FastAPI
-        ├── Jinja2
-        ├── HTMX
-        ├── SQLite
-        └── Scheduler
+GET  /
+GET  /api/groups
+POST /categories/{group}
+POST /children/{group}
+POST /all
 ```
 
-Pi-hole and Family Control should remain separate services/containers.
+The exact route structure can be simplified if a common route is preferable.
 
-The Family Control container should be ARM64-compatible and configured with:
+The important requirement is that category and child operations ultimately change the enabled state of the corresponding Pi-hole group.
 
-- Automatic restart
-- Persistent SQLite storage via a Docker volume/bind mount
-- Environment-based configuration/secrets
-- A health check
-- Straightforward container logging
-- A single exposed HTTP port for LAN access
+---
 
-There is no requirement for additional containers such as PostgreSQL, Redis, Node.js, nginx or a separate frontend service.
+## 11. Error Handling
 
-A Python virtual environment/systemd deployment is a possible alternative, but is not the preferred deployment model.
+The application should handle:
 
-Initial deployment can simply build the container on the Raspberry Pi from the GitHub repository. A later iteration can add GitHub Actions/CI and automated image publishing if useful.
+- Pi-hole unavailable
+- Pi-hole API errors
+- Configured group not found
+- Invalid API responses
+- Failed group updates
 
-------------------------------------------------------------------------
+A failed operation should not be presented to the user as successful.
 
-## 11. Repository / Deployment
+The UI should retain or refresh the actual state reported by Pi-hole.
 
-The project will be maintained in a GitHub repository and deployed to
-the Raspberry Pi.
+---
 
-Suggested repository:
+## 12. Security and Deployment
 
-``` text
-family-pihole-control/
-```
+The application is intended for use on the local network.
 
-Suggested structure:
+Pi-hole credentials and other secrets must not be committed to Git.
 
-``` text
-family-pihole-control/
-├── app/
-│   ├── main.py
-│   ├── pihole.py
-│   ├── models.py
-│   ├── scheduler.py
-│   └── templates/
-├── tests/
-├── compose.yml
-├── requirements.txt
-├── .env.example
-├── DESIGN.md
-├── README.md
-└── .gitignore
-```
+Use environment variables for configuration and credentials where required.
 
-The Pi-hole API connection should be isolated behind a `PiHoleClient`
-abstraction.
+The application should not expose Pi-hole's API directly to the Internet.
 
-Example conceptual interface:
+Docker Compose is the intended deployment mechanism.
 
-``` python
-class PiHoleClient:
-    def get_groups(self):
-        ...
+---
 
-    def get_group(self, name):
-        ...
+## 13. Explicitly Out of Scope
 
-    def set_group_enabled(self, name, enabled):
-        ...
+The following are deliberately **not part of the current application**:
 
-    def get_clients(self):
-        ...
+- Individual service controls
+- Individual domain controls
+- Regex editing
+- Domain management
+- Client/device management
+- Creating or deleting Pi-hole groups
+- Creating or deleting Pi-hole rules
+- Editing client-to-group assignments
+- Editing rule-to-group assignments
+- User accounts
+- Audit history
+- Application database
+- Remote access
+- A second DNS or policy engine
 
-    def get_domains(self, group_id=None):
-        ...
-```
+If a future requirement needs one of these, it should be considered separately rather than added speculatively.
 
-This prevents Pi-hole-specific HTTP details from leaking throughout the
-application.
+---
 
-------------------------------------------------------------------------
+## 14. Design Principles
 
-## 12. Security
+1. **Keep it simple.**
+2. **Pi-hole is the source of truth.**
+3. **Pi-hole is the enforcement engine.**
+4. **Groups are the control surface.**
+5. **Do not manipulate individual domain rules.**
+6. **Do not duplicate Pi-hole configuration.**
+7. **Do not introduce a database without a concrete requirement.**
+8. **The UI should expose family-friendly controls, not Pi-hole implementation details.**
+9. **Use the existing Pi-hole group structure rather than creating another policy model.**
+10. **Prefer a small amount of reliable functionality over a feature-rich architecture.**
 
-Current Pi-hole API authentication is not configured because the
-installation currently has no Pi-hole password.
+---
 
-That is acceptable for initial LAN-only development/testing.
+## 15. MVP Success Criteria
 
-Before remote access is introduced:
+The MVP is successful when the user can open Family Pi-hole Control and:
 
--   Configure Pi-hole authentication.
--   Store credentials outside source control.
--   Use environment variables/secrets.
--   Do not expose Pi-hole's API directly to the Internet.
--   Add authentication to Family Control itself.
--   Prefer a private network/VPN solution such as Tailscale for remote
-    access.
+- See the current state of Streaming, Gaming and Social Media.
+- See the current state of Orla, Finnian and Kian.
+- Block or allow each category.
+- Block or allow each child.
+- Apply an All operation.
+- See the resulting state reflected from Pi-hole.
+- Verify that the resulting DNS behaviour is enforced by Pi-hole.
 
-Desired eventual topology:
+The application should accomplish this without reading, modifying or maintaining individual Pi-hole domain/regex rules.
 
-``` text
-Phone outside home
-       |
-    Tailscale
-       |
-       v
-Raspberry Pi
-       |
-       +-- Family Control
-       |
-       +-- Pi-hole
-       |
-       +-- Home LAN
-```
+**Family Pi-hole Control is a simple control panel for Pi-hole groups — nothing more.**
 
-No direct Internet exposure of the Pi-hole API should be required.
+---
 
-------------------------------------------------------------------------
+## 16. Scheduling (weekly internet control)
 
-## 13. Initial MVP
+The application includes a simple weekly scheduler for the three content
+category groups (`streaming`, `gaming`, `social-media`). Child groups and
+`Default` remain manual-only.
 
-The first implementation should deliberately be small.
+### Model
 
-### Phase 1 --- Read-only discovery
+A schedule has an optional name, a set of days (0–6, Monday = 0), a start
+time and an end time (server-local `HH:MM`), and the categories to block.
 
--   Connect to Pi-hole API
--   Display groups
--   Display clients
--   Display group assignments
--   Display domain rules
--   Identify existing service/block definitions
+- Window end = auto-allow: a category is BLOCKED iff at least one active
+  schedule includes it, ALLOWED otherwise. The scheduler enforces both
+  directions.
+- If `end < start`, the window runs overnight (e.g. Fri 21:00 → Sat 08:00).
+- If `end == start`, the window covers the full 24h day.
+- Weekday/weekend differences are just schedules with different day sets
+  (quick-picks in the form). No calendar UI.
 
-### Phase 2 --- Group control
+### Enforcement
 
--   Toggle `kids-restricted`
--   Toggle `Orla-restricted`
--   Toggle `TV`
--   Confirm state through API
--   Replace existing cron functionality
+A single asyncio task (stdlib only — no APScheduler) started in the
+FastAPI lifespan ticks every `$SCHEDULER_TICK_SECONDS` (default 30) and
+sleeps before the first tick. Each tick:
 
-### Phase 3 --- Scheduling
+1. If paused, do nothing.
+2. Compute the scheduled state per category at the current time.
+3. For each category whose scheduled state differs from the last enforced
+   state, change the Pi-hole group via the normal group-update path and
+   record it in `last_enforced`.
 
--   Store schedules in SQLite
--   Schedule group enable/disable
--   Replace current cron jobs
--   Add temporary overrides
+A failed update does not update `last_enforced`, so the change retries on
+the next tick and an error is shown on the dashboard. First run (no state
+file) initialises `last_enforced` to the current scheduled state without
+forcing, so existing Pi-hole state is never clobbered.
 
-### Phase 4 --- Network-wide services
+### Pause and resume
 
--   Define human-friendly services
--   Map services to existing Pi-hole domain IDs
--   Determine the safest supported API mechanism for service/group
-    membership
--   Implement network-wide toggles
--   Preserve independent group restrictions
+- While paused the scheduler never touches groups; manual Allow/Block
+  toggles persist indefinitely.
+- Resuming immediately re-applies the current scheduled state (catch-up).
+- While unpaused, a manual toggle sticks until the next boundary, where
+  the schedule re-asserts.
 
-### Phase 5 --- Devices
+### Persistence
 
--   Friendly device list
--   Device/group management
--   Better handling of newly discovered devices
--   Potential device ownership/person model
+Two JSON files in `$SCHEDULE_DIR` (default `./data`, `/data` in Docker):
 
-### Phase 6 --- Remote access
+- `schedules.json` — schedule definitions.
+- `scheduler-state.json` — `{paused, last_enforced}`.
 
--   Authentication
--   Tailscale
--   HTTPS/private access
--   Remote management
+Writes are atomic (tmp file + rename); missing or corrupt files fall back
+to empty defaults so the app never crashes on startup. No database.
 
-------------------------------------------------------------------------
+### Time
 
-## 14. Important Open Questions
-
-These should be resolved before implementing destructive or
-configuration-changing features.
-
-### Domain/group API
-
-We have not yet established a documented v6 REST operation for
-adding/removing an existing domain from a group.
-
-Do not assume such an endpoint exists.
-
-### Network-wide service implementation
-
-We need to decide whether network-wide service blocks should be
-represented using:
-
-1.  Default group membership
-2.  A dedicated network-wide group
-3.  Existing groups
-4.  Another Pi-hole-supported mechanism
-
-The desired UX is clear; the exact Pi-hole implementation should be
-validated first.
-
-### Group evaluation
-
-The interaction between:
-
--   Default
--   custom groups
--   enabled/disabled groups
--   multi-group clients
--   multi-group domains
-
-should be tested against the real installation before implementing
-inheritance assumptions.
-
-------------------------------------------------------------------------
-
-## 15. Design Principles
-
-1.  **Pi-hole remains the enforcement engine.**
-2.  **The application is a simplified control plane.**
-3.  **Reuse existing Pi-hole groups and clients wherever possible.**
-4.  **Do not duplicate Pi-hole's domain/rule database.**
-5.  **Do not modify `gravity.db` directly from the application.**
-6.  **Use the supported Pi-hole API for writes.**
-7.  **Keep human-friendly concepts separate from Pi-hole implementation
-    details.**
-8.  **Network-wide and group-specific restrictions should be
-    independently understandable.**
-9.  **Schedules belong to the application, not system cron.**
-10. **Remote access should use a private network/VPN rather than
-    exposing Pi-hole publicly.**
-11. **Start small and validate each Pi-hole API operation against the
-    real installation before building abstractions around it.**
-
-------------------------------------------------------------------------
-
-## 16. Current Status
-
-Confirmed against the real Pi-hole installation:
-
--   Pi-hole v6.4.3 Core / Web 6.6 / FTL 6.7
--   API available locally
--   Authentication endpoint working
--   Groups can be read
--   Clients can be read
--   Domains can be read
--   Group enable/disable can be performed through `PUT`
--   Existing group/client/domain configuration has been inspected
--   Existing cron-based restriction scheduling has been identified
-
-The next implementation milestone is to create the GitHub repository and
-build a minimal FastAPI application that can **read the existing Pi-hole
-configuration and safely toggle an existing group**.
+All times are server-local (the machine running the app). There is no
+timezone picker.

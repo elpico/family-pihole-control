@@ -1,52 +1,530 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-    <title>Family Control</title>
-
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Family Pi-hole Control</title>
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+    <script>
+      htmx.defineExtension("json-body", {
+        encodeParameters: function (xhr, parameters) {
+          var payload = parameters;
+          if (parameters instanceof FormData) {
+            payload = {};
+            parameters.forEach(function (value, key) {
+              if (payload[key] === undefined) {
+                payload[key] = value;
+              } else if (Array.isArray(payload[key])) {
+                payload[key].push(value);
+              } else {
+                payload[key] = [payload[key], value];
+              }
+            });
+          }
+          if (Object.keys(payload).length > 0) {
+            return JSON.stringify(payload);
+          }
+        },
+        onEvent: function (name, evt) {
+          if (name === "htmx:configRequest") {
+            evt.detail.headers["Content-Type"] = "application/json";
+          }
+        },
+      });
+      function pickDays(values) {
+        document
+          .querySelectorAll('#schedule-form input[name="days"]')
+          .forEach(function (box) {
+            box.checked = values.indexOf(Number(box.value)) !== -1;
+          });
+      }
+      function editSchedule(data) {
+        var form = document.getElementById("schedule-form");
+        form.setAttribute("hx-post", "/schedules/" + data.id);
+        form.elements.name.value = data.name;
+        form.elements.start.value = data.start;
+        form.elements.end.value = data.end;
+        document
+          .querySelectorAll('#schedule-form input[name="days"]')
+          .forEach(function (box) {
+            box.checked = data.days.indexOf(Number(box.value)) !== -1;
+          });
+        document
+          .querySelectorAll('#schedule-form input[name="categories"]')
+          .forEach(function (box) {
+            box.checked = data.categories.indexOf(box.value) !== -1;
+          });
+        var details = document.getElementById("schedule-details");
+        details.open = true;
+        details.scrollIntoView({ block: "nearest" });
+      }
+    </script>
     <style>
-        .error {
-            color: #b00020;
-            font-weight: bold;
-        }
+      :root {
+        --bg: #101418;
+        --panel: #1a2027;
+        --text: #e8edf2;
+        --muted: #9aa7b4;
+        --green: #2e7d32;
+        --red: #c62828;
+        --amber: #f9a825;
+      }
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+      main {
+        max-width: 900px;
+        margin: 2rem auto;
+        padding: 0 1rem;
+      }
+      h1 {
+        font-size: 1.4rem;
+        letter-spacing: 0.08em;
+      }
+      h2 {
+        font-size: 1rem;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      .error {
+        background: var(--red);
+        padding: 0.6rem 1rem;
+        border-radius: 6px;
+        margin: 0.75rem 0;
+      }
+      .note {
+        background: #1b3a1e;
+        color: #b7e0b9;
+        padding: 0.6rem 1rem;
+        border-radius: 6px;
+        margin: 0.75rem 0;
+      }
+      .hint {
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        margin-top: 0.5rem;
+        margin-bottom: 1rem;
+      }
+      th,
+      td {
+        border: 1px solid #2c3540;
+        padding: 0.6rem 0.8rem;
+        text-align: left;
+        vertical-align: middle;
+      }
+      tbody th {
+        background: var(--panel);
+        font-weight: 600;
+      }
+      .state-blocked,
+      .state-allowed,
+      .state-mixed,
+      .state-missing {
+        display: inline-block;
+        padding: 0.15rem 0.5rem;
+        border-radius: 4px;
+        font-size: 0.8rem;
+        font-weight: 700;
+        margin-right: 0.5rem;
+      }
+      .state-blocked {
+        background: var(--red);
+      }
+      .state-allowed {
+        background: var(--green);
+      }
+      .state-mixed {
+        background: #4d3f07;
+        color: var(--amber);
+      }
+      .state-missing {
+        background: #3a4350;
+        color: var(--muted);
+        font-weight: 500;
+      }
+      button {
+        border: none;
+        border-radius: 6px;
+        padding: 0.35rem 0.9rem;
+        color: white;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button.allow {
+        background: var(--green);
+      }
+      button.block {
+        background: var(--red);
+      }
+      button.danger {
+        background: #5a2420;
+        color: #f2b8b5;
+      }
+      button.small {
+        padding: 0.2rem 0.6rem;
+        font-size: 0.8rem;
+      }
+      .chip {
+        display: inline-block;
+        padding: 0.15rem 0.5rem;
+        border-radius: 4px;
+        font-size: 0.8rem;
+        font-weight: 700;
+        vertical-align: middle;
+      }
+      .chip.auto {
+        background: var(--green);
+      }
+      .chip.paused {
+        background: #4d3f07;
+        color: var(--amber);
+      }
+      .chip.override {
+        background: #3a4350;
+        color: var(--text);
+        font-size: 0.7rem;
+        margin-left: 0.4rem;
+      }
+      .sub {
+        color: var(--muted);
+        font-size: 0.78rem;
+        font-weight: 400;
+        margin-top: 0.15rem;
+      }
+      .now-line {
+        margin: 0.5rem 0;
+        line-height: 1.6;
+      }
+      .now-cat {
+        display: inline-block;
+        margin-right: 0.9rem;
+        font-size: 0.85rem;
+        white-space: nowrap;
+      }
+      .now-cat.blocked {
+        color: #f28b82;
+      }
+      .now-cat.open {
+        color: #81c995;
+      }
+      .schedule-list {
+        list-style: none;
+        padding: 0;
+        margin: 0.5rem 0;
+      }
+      .schedule-list li {
+        background: var(--panel);
+        border-radius: 6px;
+        padding: 0.5rem 0.8rem;
+        margin-bottom: 0.5rem;
+      }
+      .schedule-list li.active {
+        outline: 1px solid var(--green);
+      }
+      .schedule-row {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+      }
+      .schedule-row .spacer {
+        flex: 1;
+      }
+      .badge {
+        background: #2c3540;
+        padding: 0.15rem 0.5rem;
+        border-radius: 4px;
+        font-size: 0.8rem;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+      .schedule-form {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.6rem 1rem;
+        margin-top: 0.6rem;
+      }
+      .schedule-form label {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        font-size: 0.9rem;
+      }
+      .schedule-form .full {
+        grid-column: 1 / -1;
+      }
+      .schedule-form input[type="text"] {
+        width: 100%;
+        background: var(--bg);
+        border: 1px solid #2c3540;
+        color: var(--text);
+        border-radius: 4px;
+        padding: 0.3rem 0.5rem;
+      }
+      .schedule-days,
+      .schedule-cats {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.35rem 0.9rem;
+        align-items: center;
+        font-size: 0.9rem;
+      }
+      input[type="time"] {
+        background: var(--bg);
+        border: 1px solid #2c3540;
+        color: var(--text);
+        border-radius: 4px;
+        padding: 0.25rem 0.4rem;
+      }
+      details summary {
+        cursor: pointer;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
     </style>
-</head>
+  </head>
+  <body>
+    <main id="dashboard" hx-ext="json-body">
+      <h1>FAMILY CONTROL</h1>
 
-<body>
+      {% if error %}
+      <div class="error">{{ error }}</div>
+      {% endif %}
+      {% if note %}
+      <div class="note">{{ note }}</div>
+      {% endif %}
 
-    <h1>Family Control</h1>
+      {% if view %}
+      {% macro action_button(url, target_state, css_class, label) %}
+      <button
+        class="{{ css_class }}"
+        hx-post="{{ url }}"
+        hx-vals='{"state": "{{ target_state }}"}'
+        hx-target="#dashboard"
+        hx-select="#dashboard"
+        hx-swap="outerHTML"
+      >
+        {{ label }}
+      </button>
+      {% endmacro %}
+      {% macro control_row(row, url_prefix, on_label, off_label, schedule_info=None, sched_paused=False) %}
+      <tr>
+        <th scope="row">
+          {{ row.name }}
+          {% if row.override %}<span class="chip override">overridden</span>{% endif %}
+          {% if schedule_info is not none %}
+          {% if sched_paused %}
+          <div class="sub">scheduler paused</div>
+          {% elif row.override %}
+          <div class="sub">
+            override — schedule says
+            {% if schedule_info.state == "BLOCKED" and schedule_info.until %}
+            blocked until {{ schedule_info.until }}
+            {% else %}
+            allowed
+            {% endif %}
+          </div>
+          {% elif schedule_info.state == "BLOCKED" and schedule_info.until %}
+          <div class="sub">scheduled — blocked until {{ schedule_info.until }}</div>
+          {% endif %}
+          {% endif %}
+        </th>
+        <td>
+          {% if row.state == "MISSING" %}
+          <span class="state-missing">MISSING</span>
+          {% else %}
+          <span
+            class="state-{{ row.state|lower }}"
+            >{{ on_label if row.state == "BLOCKED" else off_label }}</span
+          >
+          {% endif %}
+        </td>
+        <td>
+          {% if row.state == "BLOCKED" %}
+          {{ action_button(url_prefix ~ "/" ~ row.key, "ALLOWED", "allow", "Allow") }}
+          {% elif row.state == "ALLOWED" %}
+          {{ action_button(url_prefix ~ "/" ~ row.key, "BLOCKED", "block", "Block") }}
+          {% else %}
+          <span class="hint">Create the {{ row.key }} group in Pi-hole first.</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endmacro %}
 
-    {% if error %}
-
-        <p class="error">{{ error }}</p>
-
-    {% else %}
-
-        <h2>Pi-hole Groups</h2>
-
-        {% for group in groups %}
-
-            <div>
-                <strong>{{ group.name }}</strong>
-
-                {% if group.enabled %}
-                    🟢 ON
+      <section>
+        <h2>All</h2>
+        <table>
+          <tbody>
+            <tr>
+              <th scope="row">{{ view.all.name }}</th>
+              <td>
+                <span class="state-{{ view.all.state|lower }}"
+                  >{{ view.all.state }}</span
+                >
+              </td>
+              <td>
+                {% if view.all.state == "BLOCKED" %}
+                {{ action_button("/all", "ALLOWED", "allow", "Allow") }}
+                {% elif view.all.state == "ALLOWED" %}
+                {{ action_button("/all", "BLOCKED", "block", "Block") }}
+                {% elif view.all.state == "MIXED" %}
+                <span class="hint">Groups are not all in the same state; set them individually.</span>
                 {% else %}
-                    🔴 OFF
+                <span class="hint">Some groups are missing in Pi-hole; create them first.</span>
                 {% endif %}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="hint">
+          Applies to the Default group plus every category and child group.
+        </p>
+      </section>
 
-                <small>
-                    (ID: {{ group.id }})
-                </small>
+      <section>
+        <h2>Content</h2>
+        <table>
+          <tbody>
+            {% for row in view.categories %}
+            {{ control_row(row, "/categories", "BLOCKED", "ALLOWED",
+                           schedule.categories.get(row.key),
+                           schedule.paused) }}
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>Children</h2>
+        <table>
+          <tbody>
+            {% for row in view.children %}
+            {{ control_row(row, "/people", "Restrictions ON", "Restrictions OFF") }}
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>Schedule</h2>
+        <p class="now-line">
+          {{ schedule.now }} —
+          {% for key, info in schedule.categories.items() %}
+          <span class="now-cat {{ 'blocked' if info.state == 'BLOCKED' else 'open' }}">
+            {{ info.name }}:
+            {% if info.state == 'BLOCKED' and info.until %}
+            blocked until {{ info.until }}
+            {% else %}
+            open
+            {% endif %}
+          </span>
+          {% endfor %}
+        </p>
+        {% if schedule.paused %}
+        <div class="note">
+          Scheduler paused — your manual choices are kept. Resuming applies the
+          current schedule immediately.
+        </div>
+        {% elif schedule.tick_error %}
+        <div class="error">{{ schedule.tick_error }}</div>
+        {% endif %}
+        {% if schedule.paused %}
+        <button class="allow" hx-post="/schedule/resume" hx-target="#dashboard" hx-select="#dashboard" hx-swap="outerHTML">
+          Resume scheduler
+        </button>
+        {% else %}
+        <button class="danger" hx-post="/schedule/pause" hx-target="#dashboard" hx-select="#dashboard" hx-swap="outerHTML">
+          Pause scheduler
+        </button>
+        {% endif %}
+        {% if schedule.next %}
+        <p class="hint">
+          Next change: {{ schedule.next.when }} {{ schedule.next.time }}
+          (in {{ schedule.next.delta }}) — {{ schedule.next.text }}
+        </p>
+        {% endif %}
+        {% if schedule.schedules %}
+        <ul class="schedule-list">
+          {% for s in schedule.schedules %}
+          <li{% if s.active_now %} class="active"{% endif %}>
+            <div class="schedule-row">
+              <strong>{{ s.description }}</strong>
+              <span class="badge">{{ s.days }}</span>
+              <span class="badge">{{ s.window }}</span>
+              <span class="hint">{{ s.categories }}</span>
+              <span class="spacer"></span>
+              <button class="small" onclick='editSchedule({{ s.edit_json | tojson }})'>
+                Edit
+              </button>
+              <button class="small danger" hx-post="/schedules/{{ s.id }}/delete" hx-target="#dashboard" hx-select="#dashboard" hx-swap="outerHTML">
+                Delete
+              </button>
             </div>
-
-        {% endfor %}
-
-    {% endif %}
-
-</body>
-
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <p class="hint">
+          No schedules yet. Add one below — e.g. block Gaming and Social Media
+          on weekdays 17:00–19:00.
+        </p>
+        {% endif %}
+        <details id="schedule-details">
+          <summary>Add or edit a schedule</summary>
+          <form id="schedule-form" class="schedule-form" hx-post="/schedules" hx-target="#dashboard" hx-select="#dashboard" hx-swap="outerHTML">
+            <label class="full">
+              Name (optional)
+              <input type="text" name="name" maxlength="60" placeholder="e.g. Weekday evenings" />
+            </label>
+            <div class="full schedule-days">
+              Days:
+              {% for value, label in schedule.day_labels %}
+              <label>
+                <input type="checkbox" name="days" value="{{ value }}" />
+                {{ label }}
+              </label>
+              {% endfor %}
+              <button type="button" class="small" onclick="pickDays([0,1,2,3,4])">Weekdays</button>
+              <button type="button" class="small" onclick="pickDays([5,6])">Weekends</button>
+              <button type="button" class="small" onclick="pickDays([0,1,2,3,4,5,6])">Every day</button>
+            </div>
+            <label>
+              Start
+              <input type="time" name="start" value="17:00" required />
+            </label>
+            <label>
+              End
+              <input type="time" name="end" value="19:00" required />
+            </label>
+            <p class="hint full">
+              If the end time is before the start time, the window runs to the
+              next day (Fri 21:00 → Sat 08:00). Same start and end blocks the
+              whole day.
+            </p>
+            <div class="full schedule-cats">
+              Categories:
+              {% for value, label in schedule.category_labels %}
+              <label>
+                <input type="checkbox" name="categories" value="{{ value }}" />
+                {{ label }}
+              </label>
+              {% endfor %}
+            </div>
+            <div class="full">
+              <button type="submit" class="allow">Save schedule</button>
+            </div>
+          </form>
+        </details>
+      </section>
+      {% endif %}
+    </main>
+  </body>
 </html>
